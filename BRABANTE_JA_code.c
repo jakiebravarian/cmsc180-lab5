@@ -33,11 +33,12 @@ typedef struct {
 
 typedef struct {
     double **matrix;
+    double *y;
+    double *results;
     int n;
     int start_index; 
     int end_index;
     int t_number;
-    int c;
     address *slave_address;
 } master_args_t;
 
@@ -48,18 +49,20 @@ typedef struct {
 } SocketConnection;
 
 typedef struct {
-    double **matrix;
+    double **X;
+    double *y;
     int n;
-    int start_index; 
+    int start_index;
     int end_index;
-} data_args_t;
+    double *results;
+} mse_args_t;
 
 ////////////////////////////////////////
 
 // function declarations
-void master(int n, int p, int t, int c, address **slave_addresses);
+void master(int n, int p, int t,  address **slave_addresses);
 void* master_t(void *args);
-void slave(int n, int p, int t, int c, address *master_address, address *slave_address);
+void slave(int n, int p, int t, address *master_address, address *slave_address);
 
 void setThreadCoreAffinity(int thread_number);
 SocketConnection* connectToServer(const char* ip, int port);
@@ -74,7 +77,7 @@ double get_elapsed_time(struct timespec start, struct timespec end);
 void handleError(const char* message);
 void printMatrix(char *matrix_name, double **matrix, int row, int col);
 void printVector(char *vector_name, double *vector, int size);
-void record_experiment(char *filename, int n, int t, int c, double runtime);
+void record_experiment(char *filename, int n, int t, double runtime);
 
 ////////////////////////////////////////
 
@@ -85,12 +88,11 @@ int main(int argc, char *argv[]) {
     int p = atoi(argv[2]);      //  port number
     int s = atoi(argv[3]);      //  status (0 = master | 1 = slave)
     int t = atoi(argv[4]);      //  number of threads
-    int c = atoi(argv[5]);      //  core-affinity (0 = no | 1 = yes)
 
     //  Print setup info
     printf("\n%s\n", DASHES DASHES DASHES DASHES);
     printf("SETUP INFORMATION\n");
-    printf("— %d x %d square matrix \n— port number: %d \n— status (0 = master | 1 = slave): %d \n— %d thread/s to create \n— core-affinity (0 = no | 1 = yes): %d\n%s\n", n, n, p, s, t, c, DASHES DASHES DASHES DASHES);
+    printf("— %d x %d square matrix \n— port number: %d \n— status (0 = master | 1 = slave): %d \n— %d thread/s to create \n%s\n", n, n, p, s, t, DASHES DASHES DASHES DASHES);
 
 
     //  Read IP Addresses and Port Numbers in Config File
@@ -126,13 +128,13 @@ int main(int argc, char *argv[]) {
 
     //  Run master process ------------------------------------------------------------------------
     if (s == 0) {
-        master(n, p, t, c, slave_addresses);
+        master(n, p, t, slave_addresses);
         return 0;
     }
 
     //  Run slave process -------------------------------------------------------------------------
     int index = (p - slave_addresses[0]->port) % t;
-    slave(n, p, t, c, master_address, slave_addresses[index]);
+    slave(n, p, t, master_address, slave_addresses[index]);
 
     for (int i = 0; i < num_slaves; i++) {
         free(slave_addresses[i]->ip);
@@ -145,7 +147,7 @@ int main(int argc, char *argv[]) {
     fclose(file);
 } 
 
-void master(int n, int p, int t, int c, address **slave_addresses) {
+void master(int n, int p, int t, address **slave_addresses) {
 
     //  Indicate that the master is now running ---------------------------------------------------
     printf("MASTER is now LISTENING at PORT %d", p);
@@ -173,7 +175,7 @@ void master(int n, int p, int t, int c, address **slave_addresses) {
         int start_index = i * work_per_thread + (i < remaining_work ? i : remaining_work);
         int end_index = start_index + work_per_thread + (i < remaining_work ? 1 : 0);
 
-        args[i] = (master_args_t){.matrix = matrix, .n = n, .start_index = start_index, .end_index = end_index, .t_number = i, .c = c, .slave_address = slave_addresses[i]};
+        args[i] = (master_args_t){.matrix = matrix, .n = n, .start_index = start_index, .end_index = end_index, .t_number = i, .slave_address = slave_addresses[i]};
         
         pthread_create(&threads[i], NULL, master_t, (void *)&args[i]);
     }
@@ -188,7 +190,7 @@ void master(int n, int p, int t, int c, address **slave_addresses) {
     double time_elapsed = get_elapsed_time(start, end);
     printf("Total Distribution Time Elapsed: %f seconds\n", time_elapsed);
 
-    record_experiment("Exer4Results", n, t, c, time_elapsed);
+    record_experiment("Exer4Results", n, t, time_elapsed);
 
     //  Free allocated memory ---------------------------------------------------------------------
     free(args);
@@ -208,14 +210,11 @@ void* master_t(void *args) {
     int start_index = actual_args->start_index;
     int end_index = actual_args->end_index;
     int t_number = actual_args->t_number;
-    int c = actual_args->c;
     address *slave_address = actual_args->slave_address;
 
 
     //  Set core affinity of thread ---------------------------------------------------------------
-    if (c == 1) {
-        setThreadCoreAffinity(t_number);
-    }
+    setThreadCoreAffinity(t_number);
 
     //  Create a socket for the thread ------------------------------------------------------------
     SocketConnection *conn = connectToServer(slave_address->ip, slave_address->port);
@@ -237,12 +236,10 @@ void* master_t(void *args) {
     return NULL;
 }
 
-void slave(int n, int p, int t, int c, address *master_address, address *slave_address) {
+void slave(int n, int p, int t, address *master_address, address *slave_address) {
 
     //  Set core affinity of slave ----------------------------------------------------------------
-    if (c == 1) {
-        setThreadCoreAffinity(slave_address->port);
-    }
+    setThreadCoreAffinity(slave_address->port);
 
     //  Create socket for slave -------------------------------------------------------------------
     printf("STARTING SLAVE %s:%d\n", slave_address->ip, slave_address->port);
@@ -457,7 +454,7 @@ void printVector(char *vector_name, double *vector, int size) {
     printf("\n");
 }
 
-void record_experiment(char *filename, int n, int t, int c, double runtime) {
+void record_experiment(char *filename, int n, int t, double runtime) {
     char tsv_filename[256];
     char pretty_filename[256];
 
@@ -476,7 +473,7 @@ void record_experiment(char *filename, int n, int t, int c, double runtime) {
             fprintf(stderr, "Error opening TSV file\n");
             exit(1);
         }
-        fprintf(tsv_file, "Date\tcore-affined?\tn\tt\tRuntime\n");    
+        fprintf(tsv_file, "Date\tn\tt\tRuntime\n");    
     } else {
         fclose(tsv_file);
         tsv_file = fopen(tsv_filename, "a");
@@ -490,7 +487,7 @@ void record_experiment(char *filename, int n, int t, int c, double runtime) {
             fprintf(stderr, "Error opening Pretty file\n");
             exit(1);
         }
-        fprintf(pretty_file, "| %-19s | %-13s | %-10s | %-10s | %-10s |\n", "Date/Time", "core-affined?", "n", "t", "Runtime");
+        fprintf(pretty_file, "| %-19s | %-10s | %-10s | %-10s |\n", "Date/Time", "n", "t", "Runtime");
         fprintf(pretty_file, "+---------------------+---------------+------------+------------+------------+\n");
     } else {
         fclose(pretty_file);
@@ -509,10 +506,10 @@ void record_experiment(char *filename, int n, int t, int c, double runtime) {
     strftime(date_time, sizeof(date_time), "%m/%d/%Y %T", local_t);
 
     // Write/Append to TSV
-    fprintf(tsv_file, "%s\t%d\t%d\t%d\t%.6f\n", date_time, c, n, t, runtime);
+    fprintf(tsv_file, "%s\t%d\t%d\t%.6f\n", date_time, n, t, runtime);
 
     // Write/Append to Pretty
-    fprintf(pretty_file, "| %-19s | %-13d | %-10d | %-10d | %-10.6f |\n", date_time, c, n, t, runtime);
+    fprintf(pretty_file, "| %-19s | %-10d | %-10d | %-10.6f |\n", date_time, n, t, runtime);
 
     fclose(tsv_file);
     fclose(pretty_file);
