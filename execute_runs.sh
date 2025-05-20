@@ -2,7 +2,7 @@
 
 # === CONFIG ===
 N=15           # Matrix size
-T=16              # Number of threads/slaves
+T=8              # Number of threads/slaves
 C=0               # Core-affined? 0 = no, 1 = yes
 BASE_PORT=28030   # Starting port
 EXEC=./a.out      # Compiled binary

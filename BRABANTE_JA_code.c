@@ -84,8 +84,9 @@ void printVector(char *vector_name, double *vector, int size);
 void record_experiment(char *filename, int n, int t, double runtime);
 
 ////////////////////////////////////////
-// DONE
+
 int main(int argc, char *argv[]) {
+    srand(time(NULL));
 
     //  Read input from command line 
     int n = atoi(argv[1]);      //  n size of matrix
@@ -150,7 +151,7 @@ int main(int argc, char *argv[]) {
 
     fclose(file);
 } 
-// DONE
+
 void master(int n, int p, int t, address **slave_addresses) {
 
     //  Indicate that the master is now running ---------------------------------------------------
@@ -216,7 +217,8 @@ void master(int n, int p, int t, address **slave_addresses) {
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_elapsed = get_elapsed_time(start, end);
-    printf("\n Time Elapsed: %f seconds\n", time_elapsed);
+    printf("\n(Master) Time Elapsed: %f seconds\n", time_elapsed);
+    printf("%s", DASHES DASHES DASHES DASHES);
 
     if(n <= 15){
         printVector("Collated vector e", final_results, n);
@@ -226,6 +228,8 @@ void master(int n, int p, int t, address **slave_addresses) {
     record_experiment("Exer5Results", n, t, time_elapsed);
 
     //  Free allocated memory ---------------------------------------------------------------------
+    free(starting_index_list);
+    free(ending_index_list);
     free(final_results);
     for (int i = 0; i < t; i++) free(args[i].results);
     free(args);
@@ -259,18 +263,21 @@ void* master_t(void *args) {
 
     //  Send data ---------------------------------------------------------------------------------
     printf("[%d] Master sending columns %d to %d (size: %d x %d) to %s:%d\n", t_number, start_index, end_index - 1, n, end_index - start_index, slave_address->ip, slave_address->port);
-    printf("%s\n", DASHES DASHES DASHES DASHES);
+    printf("%s", DASHES DASHES DASHES DASHES);
     sendData(matrix, y, n, start_index, end_index, conn->sockfd);
 
     //  Receive result ----------------------------------------------------------------------------
     receiveResult(conn->sockfd, results, n, start_index, end_index);
+    printf("Received MSE results from %s:%d\n", slave_address->ip, slave_address->port);
+    printf("%s\n", DASHES DASHES DASHES DASHES);
 
+    // Cleanup
     close(conn->connfd);
     close(conn->sockfd);
     free(conn);
     return NULL;
 }
-// "DONE"
+
 void slave(int n, int p, int t, address *master_address, address *slave_address) {
 
     //  Set core affinity of slave ----------------------------------------------------------------
@@ -294,7 +301,7 @@ void slave(int n, int p, int t, address *master_address, address *slave_address)
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    //  Compute for e
+    //  Compute for vector e
     printf("Start computation of MSE\n");
     mse(data);
     printf("End computation of MSE\n");
@@ -302,7 +309,8 @@ void slave(int n, int p, int t, address *master_address, address *slave_address)
     // End time after computation
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_elapsed = get_elapsed_time(start, end);
-    printf("(MSE Computation) Time Elapsed: %f seconds\n", time_elapsed);
+    printf("(Slave - MSE Computation) Time Elapsed: %f seconds\n", time_elapsed);
+    printf("%s", DASHES DASHES DASHES DASHES);
 
     //  Send vector e to master -------------------------------------------------------------------
     sendResult(conn->connfd, data);
@@ -321,7 +329,7 @@ void slave(int n, int p, int t, address *master_address, address *slave_address)
     close(conn->sockfd);
     free(conn);
 }
-// DONE
+
 void setThreadCoreAffinity(int thread_number) {
     // Retrieve the number of online processors and calculate the count of physical cores
     int total_cores = sysconf(_SC_NPROCESSORS_ONLN);
@@ -347,7 +355,7 @@ void setThreadCoreAffinity(int thread_number) {
     printf("%s\n", DASHES DASHES DASHES DASHES);
 }
 
-// DONE
+
 SocketConnection* connectToServer(const char* ip, int port) {
     SocketConnection* conn = malloc(sizeof(SocketConnection));
     if (!conn) handleError("Failed to allocate memory for SocketConnection");
@@ -367,7 +375,7 @@ SocketConnection* connectToServer(const char* ip, int port) {
 
     return conn;
 }
-// DONE
+
 SocketConnection* initializeServerSocket(const char* ip, int port) {
     SocketConnection* conn = malloc(sizeof(SocketConnection));
     if (!conn) handleError("Failed to allocate memory for SocketConnection");
@@ -409,17 +417,6 @@ void sendData(double **matrix, double *vector_y, int n, int start_index, int end
     int matrix_info[] = {start_index, end_index, n};
     write(sockfd, matrix_info, sizeof(matrix_info));
 
-    // if (n <= 15) {
-    //     printf("%s\n", DASHES DASHES DASHES DASHES);
-    //     printf("[DEBUG] Sending Submatrix (rows %d to %d, total: %d x %d) to sockfd = %d:\n", start_index, end_index - 1, end_index - start_index, n, sockfd);
-    //     printMatrix("Submatrix to Send", &matrix[start_index], end_index - start_index, n);
-
-    //     // DEBUG: Print vector_y
-    //     printf("\n[DEBUG] Sending vector_y (length: %d) to sockfd = %d:\n", n, sockfd);
-    //     printVector("vector_y", vector_y, n);
-    //     printf("%s\n", DASHES DASHES DASHES DASHES);
-    // }
-
     //  Send matrix data --------------------------------------------------------------------------
     unsigned int element_size = sizeof(double);
     int num_elements = KB / element_size;
@@ -458,7 +455,7 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
 
     // Allocate memory for matrix and vector
     data->X = malloc(sizeof(double*) * rows_to_receive);
-    if (data->X == NULL) perror("Failed to allocate memory for matrix rows");
+    if (data->X == NULL) handleError("Failed to allocate memory for matrix rows");
 
     data->y = malloc(sizeof(double) * data->n);
     if (data->y == NULL) handleError("Failed to allocate memory for vector y");
@@ -497,17 +494,15 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
     return data;
 
 }
-// DONE
-void mse(mse_args_t* args) {
-    // args->results = malloc(sizeof(double) * args->n);
-    args->results = malloc(sizeof(double) * (args->end_index - args->start_index));
 
+void mse(mse_args_t* args) {
+    args->results = malloc(sizeof(double) * (args->end_index - args->start_index));
+    
     for (int idx = args->start_index; idx < args->end_index; idx++) {
         double sum_of_squared_differences = 0;
 
         // Compute sum of squared differences
         for (int i = 0; i < args->n; i++) {
-            // double difference = args->X[idx][i] - args->y[i];
             double difference = args->X[idx - args->start_index][i] - args->y[i];
             sum_of_squared_differences += difference * difference;
         }
@@ -548,8 +543,8 @@ void receiveResult(int sockfd, double *results, int n, int start_index, int end_
     int remaining_elements = length % num_elements;
 
     for(int j = 0; j < groups_per_row; j++){
-        int start_index = j * num_elements;
-        recv(sockfd, &(results[start_index]), num_elements * element_size, 0);
+        int chunk_start = j * num_elements;
+        recv(sockfd, &(results[chunk_start]), num_elements * element_size, 0);
     }
     recv(sockfd, &(results[groups_per_row * num_elements]), remaining_elements * element_size, 0);
 
@@ -574,14 +569,12 @@ void createMatrixVector(double** matrix, double* vector_y, int n){
     } else {
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                matrix[j][i] = (double)(rand() % 100 + 1);  // Automatically transposed
+                matrix[i][j] = (double)(rand() % 100 + 1); 
             }
             vector_y[i] = (double)(rand() % 100 + 1);
         }
     }
 }
-
-////////////////////////////////////////
 
 double get_elapsed_time(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
@@ -644,7 +637,7 @@ void record_experiment(char *filename, int n, int t, double runtime) {
             exit(1);
         }
         fprintf(pretty_file, "| %-19s | %-10s | %-10s | %-10s |\n", "Date/Time", "n", "t", "Runtime");
-        fprintf(pretty_file, "+---------------------+---------------+------------+------------+------------+\n");
+        fprintf(pretty_file, "+---------------------+------------+------------+------------+\n");
     } else {
         fclose(pretty_file);
         pretty_file = fopen(pretty_filename, "a");
