@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # === CONFIG ===
-N=20000           # Matrix size
-T=2               # Number of threads/slaves
+N=15           # Matrix size
+T=16              # Number of threads/slaves
 C=0               # Core-affined? 0 = no, 1 = yes
 BASE_PORT=28030   # Starting port
 EXEC=./a.out      # Compiled binary

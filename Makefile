@@ -25,4 +25,7 @@ execute: all
 clean:
 	rm -f $(TARGET) 
 
+kill:
+	sudo ./kill_ports.sh
+
 .PHONY: all run clean
