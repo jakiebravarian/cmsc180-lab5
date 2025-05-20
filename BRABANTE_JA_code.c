@@ -61,19 +61,19 @@ typedef struct {
 
 // function declarations
 void master(int n, int p, int t,  address **slave_addresses);
-// void* master_t(void *args);
-// void slave(int n, int p, int t, address *master_address, address *slave_address);
+void* master_t(void *args);
+void slave(int n, int p, int t, address *master_address, address *slave_address);
 
-// void setThreadCoreAffinity(int thread_number);
-// SocketConnection* connectToServer(const char* ip, int port);
-// SocketConnection* initializeServerSocket(const char* ip, int port);
+void setThreadCoreAffinity(int thread_number);
+SocketConnection* connectToServer(const char* ip, int port);
+SocketConnection* initializeServerSocket(const char* ip, int port);
 
-// void sendData(double **matrix, double *vector_y, int n, int start_index, int end_index, int sockfd);
-// mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data);
+void sendData(double **matrix, double *vector_y, int n, int start_index, int end_index, int sockfd);
+mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data);
 
-// void mse(mse_args_t* args);
-// void sendResult(int connfd, pearson_args_t* data);
-// void receiveResult(int sockfd, double *results, int n, int start_index, int end_index);
+void mse(mse_args_t* args);
+void sendResult(int connfd, pearson_args_t* data);
+void receiveResult(int sockfd, double *results, int n, int start_index, int end_index);
 
 void **createMatrixVector(double** matrix, double* vector_y, int n);
 
@@ -81,7 +81,7 @@ double get_elapsed_time(struct timespec start, struct timespec end);
 void handleError(const char* message);
 void printMatrix(char *matrix_name, double **matrix, int row, int col);
 void printVector(char *vector_name, double *vector, int size);
-// void record_experiment(char *filename, int n, int t, double runtime);
+void record_experiment(char *filename, int n, int t, double runtime);
 
 ////////////////////////////////////////
 // DONE
@@ -138,15 +138,15 @@ int main(int argc, char *argv[]) {
 
     //  Run slave process -------------------------------------------------------------------------
     int index = (p - slave_addresses[0]->port) % t;
-    // slave(n, p, t, master_address, slave_addresses[index]);
+    slave(n, p, t, master_address, slave_addresses[index]);
 
-    // for (int i = 0; i < num_slaves; i++) {
-    //     free(slave_addresses[i]->ip);
-    //     free(slave_addresses[i]);
-    // }
-    // free(slave_addresses);
-    // free(master_address->ip);
-    // free(master_address);
+    for (int i = 0; i < num_slaves; i++) {
+        free(slave_addresses[i]->ip);
+        free(slave_addresses[i]);
+    }
+    free(slave_addresses);
+    free(master_address->ip);
+    free(master_address);
 
     fclose(file);
 } 
@@ -164,45 +164,86 @@ void master(int n, int p, int t, address **slave_addresses) {
     double* vector_y = malloc(n * sizeof(double));
     createMatrixVector(matrix, vector_y, n);
 
-    exit(EXIT_SUCCESS);
+    if (n <= 15){
+        printMatrix("Original Matrix (Master)", matrix, n, n);
+        printVector("Original vector_y (Master)", vector_y, n);
+        printf("%s\n", DASHES DASHES DASHES DASHES);
+    }
 
-    // //  Divide matrix to distribute to slaves -----------------------------------------------------
-    // int work_per_thread = n / t;
-    // int remaining_work = n % t;
+    //  Divide columns to t threads -----------------------------------------------------
+    int work_per_thread = n / t;
+    int remaining_work = n % t;
+    int* starting_index_list = malloc(t * sizeof(int));
+    int* ending_index_list = malloc(t * sizeof(int));
+    
+    for(int i = 0; i < t; i++){
+        int start_index = i * work_per_thread + (i < remaining_work ? i : remaining_work);
+        starting_index_list[i] = start_index;
 
-    // pthread_t *threads = malloc(t * sizeof(pthread_t));
-    // master_args_t *args = malloc(t * sizeof(master_args_t));
+        int end_index = start_index + work_per_thread + (i < remaining_work ? 1 : 0);
+        ending_index_list[i] = end_index;
+    }
 
-    // struct timespec start, end;
-    // clock_gettime(CLOCK_MONOTONIC, &start);
+    //  Divide matrix to distribute to slaves -----------------------------------------------------
+    pthread_t *threads = malloc(t * sizeof(pthread_t));
+    master_args_t *args = malloc(t * sizeof(master_args_t));
+    double** thread_results = malloc(t * sizeof(double*)); // Allocate array of pointers for each thread's result
 
-    // for (int i = 0; i < t; i++) {
-    //     int start_index = i * work_per_thread + (i < remaining_work ? i : remaining_work);
-    //     int end_index = start_index + work_per_thread + (i < remaining_work ? 1 : 0);
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
-    //     args[i] = (master_args_t){.matrix = matrix, .n = n, .start_index = start_index, .end_index = end_index, .t_number = i, .slave_address = slave_addresses[i]};
-        
-    //     pthread_create(&threads[i], NULL, master_t, (void *)&args[i]);
-    // }
+    typedef struct {
+        double **matrix;
+        double *y;
+        double *results;
+        int n;
+        int start_index; 
+        int end_index;
+        int t_number;
+        address *slave_address;
+    } master_args_t;
+
+    for (int i = 0; i < t; i++) {
+        args[i] = (master_args_t){.matrix = matrix, .y = vector_y, .n = n, .start_index = starting_index_list[i], .end_index = ending_index_list[i], .t_number = i, .slave_address = slave_addresses[i]};
+        args[i].results = malloc((ending_index_list[i] - starting_index_list[i]) * sizeof(double));  // Allocate individual results array
+        thread_results[i] = args[i].results; // Store pointer for aggregation
+
+        pthread_create(&threads[i], NULL, master_t, (void *)&args[i]);
+    }
 
 
-    // //  Join threads ------------------------------------------------------------------------------
-    // for (int i = 0; i < t; i++) {
-    //     pthread_join(threads[i], NULL);
-    // }
+    //  Join threads ------------------------------------------------------------------------------
+    for (int i = 0; i < t; i++) {
+        pthread_join(threads[i], NULL);
+    }
 
-    // clock_gettime(CLOCK_MONOTONIC, &end);
-    // double time_elapsed = get_elapsed_time(start, end);
-    // printf("Total Distribution Time Elapsed: %f seconds\n", time_elapsed);
+    // Aggregate results from each thread
+    double *final_results = malloc(n * sizeof(double));
+    for (int i = 0; i < t; i++) {
+        for (int j = 0; j < (args[i].end_index - args[i].start_index); j++) {
+            final_results[args[i].start_index + j] = thread_results[i][j];
+        }
+    }
 
-    // record_experiment("Exer4Results", n, t, time_elapsed);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double time_elapsed = get_elapsed_time(start, end);
+    printf("Time Elapsed: %f seconds\n", time_elapsed);
 
-    // //  Free allocated memory ---------------------------------------------------------------------
-    // free(args);
-    // free(threads);
-    // for (int i = 0; i < n; i++) free(matrix[i]);
-    // free(matrix);
+    if(n <= 15){
+        printVector("Collated vector e", final_results, n);
+        printf("%s\n", DASHES DASHES DASHES DASHES);
+    }
 
+    record_experiment("Exer4Results", n, t, time_elapsed);
+
+    //  Free allocated memory ---------------------------------------------------------------------
+    free(final_results);
+    for (int i = 0; i < t; i++) free(args[i].results);
+    free(args);
+    free(threads);
+    free(vector_y);
+    for (int i = 0; i < n; i++) free(matrix[i]);
+    free(matrix);
 }
 
 // void* master_t(void *args) {
@@ -417,11 +458,6 @@ void **createMatrixVector(double** matrix, double* vector_y, int n){
             }
             vector_y[i] = y_values[i];
         }
-
-        printMatrix("Original Matrix (Master)", matrix, n, n);
-        printVector("Original vector_y (Master)", vector_y, n);
-        printf("%s\n", DASHES DASHES DASHES DASHES);
-
     } else {
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
