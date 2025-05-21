@@ -81,12 +81,18 @@ double get_elapsed_time(struct timespec start, struct timespec end);
 void handleError(const char* message);
 void printMatrix(char *matrix_name, double **matrix, int row, int col);
 void printVector(char *vector_name, double *vector, int size);
-void record_experiment(char *filename, int n, int t, double runtime);
+void record_experiment(char *filename, int p, int n, int t, double runtime);
 
 ////////////////////////////////////////
 
 int main(int argc, char *argv[]) {
     srand(time(NULL));
+
+    if (argc != 5) {
+        fprintf(stderr, "❌ Error: Invalid number of arguments.\n");
+        fprintf(stderr, "Usage: %s <n> <port> <status (0=master, 1=slave)> <threads>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
     //  Read input from command line 
     int n = atoi(argv[1]);      //  n size of matrix
@@ -102,7 +108,8 @@ int main(int argc, char *argv[]) {
 
     //  Read IP Addresses and Port Numbers in Config File
     char filename[255];
-    sprintf(filename, "config_%d.cfg", t);
+    sprintf(filename, "localconfig/config_%d.cfg", t);
+    // sprintf(filename, "droneconfig/config_%d.cfg", t);
     printf("READING FROM CONFIG FILE: %s\n", filename);
 
     FILE *file = fopen(filename, "r");
@@ -141,11 +148,15 @@ int main(int argc, char *argv[]) {
     int index = (p - slave_addresses[0]->port) % t;
     slave(n, p, t, master_address, slave_addresses[index]);
 
-    for (int i = 0; i < num_slaves; i++) {
-        free(slave_addresses[i]->ip);
-        free(slave_addresses[i]);
+    // Cleanup
+    if (s == 0) {
+        for (int i = 0; i < num_slaves; i++) {
+            free(slave_addresses[i]->ip);
+            free(slave_addresses[i]);
+        }
+        free(slave_addresses);
     }
-    free(slave_addresses);
+
     free(master_address->ip);
     free(master_address);
 
@@ -225,7 +236,7 @@ void master(int n, int p, int t, address **slave_addresses) {
         printf("%s\n", DASHES DASHES DASHES DASHES);
     }
 
-    record_experiment("Exer5Results", n, t, time_elapsed);
+    record_experiment("Exer5Results", p, n, t, time_elapsed);
 
     //  Free allocated memory ---------------------------------------------------------------------
     free(starting_index_list);
@@ -311,6 +322,8 @@ void slave(int n, int p, int t, address *master_address, address *slave_address)
     double time_elapsed = get_elapsed_time(start, end);
     printf("(Slave - MSE Computation) Time Elapsed: %f seconds\n", time_elapsed);
     printf("%s", DASHES DASHES DASHES DASHES);
+
+    record_experiment("Exer5Results", p, n, t, time_elapsed);
 
     //  Send vector e to master -------------------------------------------------------------------
     sendResult(conn->connfd, data);
@@ -603,13 +616,13 @@ void printVector(char *vector_name, double *vector, int size) {
     printf("\n");
 }
 
-void record_experiment(char *filename, int n, int t, double runtime) {
+void record_experiment(char *filename, int p, int n, int t, double runtime) {
     char tsv_filename[256];
     char pretty_filename[256];
 
     // Build filenames
-    snprintf(tsv_filename, sizeof(tsv_filename), "%s.tsv", filename);
-    snprintf(pretty_filename, sizeof(pretty_filename), "%s_pretty.txt", filename);
+    snprintf(tsv_filename, sizeof(tsv_filename), "util/%s.tsv", filename);
+    snprintf(pretty_filename, sizeof(pretty_filename), "util/%s_pretty.txt", filename);
 
     FILE *tsv_file;
     FILE *pretty_file;
@@ -622,7 +635,7 @@ void record_experiment(char *filename, int n, int t, double runtime) {
             fprintf(stderr, "Error opening TSV file\n");
             exit(1);
         }
-        fprintf(tsv_file, "Date\tn\tt\tRuntime\n");    
+        fprintf(tsv_file, "Date\tPort Num\tn\tt\tRuntime\n");    
     } else {
         fclose(tsv_file);
         tsv_file = fopen(tsv_filename, "a");
@@ -636,8 +649,8 @@ void record_experiment(char *filename, int n, int t, double runtime) {
             fprintf(stderr, "Error opening Pretty file\n");
             exit(1);
         }
-        fprintf(pretty_file, "| %-19s | %-10s | %-10s | %-10s |\n", "Date/Time", "n", "t", "Runtime");
-        fprintf(pretty_file, "+---------------------+------------+------------+------------+\n");
+        fprintf(pretty_file, "| %-19s | %-10s | %-10s | %-10s | %-10s |\n", "Date/Time", "Port Num", "n", "t", "Runtime");
+        fprintf(pretty_file, "+---------------------+------------+------------+------------+------------+\n");
     } else {
         fclose(pretty_file);
         pretty_file = fopen(pretty_filename, "a");
@@ -655,10 +668,11 @@ void record_experiment(char *filename, int n, int t, double runtime) {
     strftime(date_time, sizeof(date_time), "%m/%d/%Y %T", local_t);
 
     // Write/Append to TSV
-    fprintf(tsv_file, "%s\t%d\t%d\t%.6f\n", date_time, n, t, runtime);
+    fprintf(tsv_file, "%s\t%d\t%d\t%d\t%.6f\n", date_time, p, n, t, runtime);
 
     // Write/Append to Pretty
-    fprintf(pretty_file, "| %-19s | %-10d | %-10d | %-10.6f |\n", date_time, n, t, runtime);
+    fprintf(pretty_file, "| %-19s | %-10d | %-10d | %-10d | %-10.6f |\n", date_time, p, n, t, runtime);
+    if (p == 28030) fprintf(pretty_file, "+---------------------+------------+------------+------------+------------+\n");
 
     fclose(tsv_file);
     fclose(pretty_file);

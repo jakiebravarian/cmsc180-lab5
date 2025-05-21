@@ -2,10 +2,10 @@
 
 # === CONFIG ===
 N=15           # Matrix size
-T=8              # Number of threads/slaves
+T=4              # Number of threads/slaves
 BASE_PORT=28030   # Starting port
 EXEC=./a.out      # Compiled binary
-CONFIG="config_${T}.cfg"
+CONFIG="../localconfig/config_${T}.cfg"
 
 # === Start Slaves First ===
 for ((i=1; i<=T; i++)); do

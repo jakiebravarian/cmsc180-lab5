@@ -17,15 +17,18 @@ all: $(TARGET)
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) -lpthread -lm
 
-# Run batch/script execution
+# Generate config files in ../droneconfig
+generate: all
+	@echo "Running config generator..."
+	bash util/generate_configs.sh
+
+# Run batch/script execution from ../util
 execute: all
-	./execute_runs.sh
+	@echo "Running batch execution..."
+	bash util/execute_runs.sh
 
 # Clean up the generated files
 clean:
-	rm -f $(TARGET) 
+	rm -f $(TARGET)
 
-kill:
-	sudo ./kill_ports.sh
-
-.PHONY: all run clean
+.PHONY: all run clean generate execute
