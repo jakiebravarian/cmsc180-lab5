@@ -62,7 +62,7 @@ typedef struct {
 // function declarations
 void master(int n, int p, int t,  address **slave_addresses);
 void* master_t(void *args);
-void slave(int n, int p, int t, address *master_address, address *slave_address);
+void slave(int n, int p, int t, address *master_address, address *slave_address, char* label);
 
 void setThreadCoreAffinity(int thread_number);
 SocketConnection* connectToServer(const char* ip, int port);
@@ -88,9 +88,9 @@ void record_experiment(char *filename, int p, int n, int t, double runtime);
 int main(int argc, char *argv[]) {
     srand(time(NULL));
 
-    if (argc != 5) {
+    if (argc != 6) {
         fprintf(stderr, "❌ Error: Invalid number of arguments.\n");
-        fprintf(stderr, "Usage: %s <n> <port> <status (0=master, 1=slave)> <threads>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <n> <port> <status (0=master, 1=slave)> <threads> <machine_label>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -99,6 +99,7 @@ int main(int argc, char *argv[]) {
     int p = atoi(argv[2]);      //  port number
     int s = atoi(argv[3]);      //  status (0 = master | 1 = slave)
     int t = atoi(argv[4]);      //  number of threads
+    char* machine_label = argv[5];  // machine (Laptop/PC)
 
     //  Print setup info
     printf("\n%s\n", DASHES DASHES DASHES DASHES);
@@ -146,7 +147,7 @@ int main(int argc, char *argv[]) {
 
     //  Run slave process -------------------------------------------------------------------------
     int index = (p - slave_addresses[0]->port) % t;
-    slave(n, p, t, master_address, slave_addresses[index]);
+    slave(n, p, t, master_address, slave_addresses[index], machine_label);
 
     // Cleanup
     if (s == 0) {
@@ -182,6 +183,19 @@ void master(int n, int p, int t, address **slave_addresses) {
         printf("%s\n", DASHES DASHES DASHES DASHES);
     }
 
+    // Transpose the matrix
+    double** transposed_matrix = malloc(n * sizeof(double*));
+    for (int i = 0; i < n; i++) {
+        transposed_matrix[i] = malloc(n * sizeof(double));
+        for (int j = 0; j < n; j++) {
+            transposed_matrix[i][j] = matrix[j][i];
+        }
+    }
+
+    if (n <= 15) {
+        printMatrix("Transposed Matrix (Each row is a column)", transposed_matrix, n, n);
+    }
+
     //  Divide columns to t threads -----------------------------------------------------
     int work_per_thread = n / t;
     int remaining_work = n % t;
@@ -205,7 +219,7 @@ void master(int n, int p, int t, address **slave_addresses) {
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < t; i++) {
-        args[i] = (master_args_t){.matrix = matrix, .y = vector_y, .n = n, .start_index = starting_index_list[i], .end_index = ending_index_list[i], .t_number = i, .slave_address = slave_addresses[i]};
+        args[i] = (master_args_t){.matrix = transposed_matrix, .y = vector_y, .n = n, .start_index = starting_index_list[i], .end_index = ending_index_list[i], .t_number = i, .slave_address = slave_addresses[i]};
         args[i].results = malloc((ending_index_list[i] - starting_index_list[i]) * sizeof(double));  // Allocate individual results array
         thread_results[i] = args[i].results; // Store pointer for aggregation
 
@@ -236,7 +250,7 @@ void master(int n, int p, int t, address **slave_addresses) {
         printf("%s\n", DASHES DASHES DASHES DASHES);
     }
 
-    record_experiment("Exer5Results", p, n, t, time_elapsed);
+    record_experiment("Exer5_Master", p, n, t, time_elapsed);
 
     //  Free allocated memory ---------------------------------------------------------------------
     free(starting_index_list);
@@ -245,6 +259,8 @@ void master(int n, int p, int t, address **slave_addresses) {
     for (int i = 0; i < t; i++) free(args[i].results);
     free(args);
     free(threads);
+    for (int i = 0; i < n; i++) free(transposed_matrix[i]);
+    free(transposed_matrix);
     free(vector_y);
     for (int i = 0; i < n; i++) free(matrix[i]);
     free(matrix);
@@ -289,7 +305,7 @@ void* master_t(void *args) {
     return NULL;
 }
 
-void slave(int n, int p, int t, address *master_address, address *slave_address) {
+void slave(int n, int p, int t, address *master_address, address *slave_address, char* label) {
 
     //  Set core affinity of slave ----------------------------------------------------------------
     setThreadCoreAffinity(slave_address->port);
@@ -323,7 +339,9 @@ void slave(int n, int p, int t, address *master_address, address *slave_address)
     printf("(Slave - MSE Computation) Time Elapsed: %f seconds\n", time_elapsed);
     printf("%s", DASHES DASHES DASHES DASHES);
 
-    record_experiment("Exer5Results", p, n, t, time_elapsed);
+    char filename[64];
+    snprintf(filename, sizeof(filename), "Exer5_Slave_%s", label);
+    record_experiment(filename, p, n, t, time_elapsed);
 
     //  Send vector e to master -------------------------------------------------------------------
     sendResult(conn->connfd, data);
@@ -383,6 +401,18 @@ SocketConnection* connectToServer(const char* ip, int port) {
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) handleError("Invalid address / Address not supported");
 
+    // Increase buffer size to handle large data transfers
+    int buf_size = 2 * KB * KB;
+    setsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
+    setsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
+
+    // Print actual buffer size settings
+    int actual_sndbuf, actual_rcvbuf;
+    socklen_t optlen = sizeof(int);
+    getsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &actual_sndbuf, &optlen);
+    getsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &actual_rcvbuf, &optlen);
+    printf("[connectToServer] Actual send buffer: %d bytes, receive buffer: %d bytes\n", actual_sndbuf, actual_rcvbuf);
+
     // Connect to the server
     if (connect(conn->sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0) handleError("Connection Failed");
 
@@ -413,13 +443,25 @@ SocketConnection* initializeServerSocket(const char* ip, int port) {
     if (listen(conn->sockfd, 5) != 0) handleError("Failed to listen on socket");
     printf("Server socket is now listening for connections...\n");
     
+    // Increase buffer sizes
+    int buf_size = 2 * KB * KB;
+    setsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
+    setsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
 
+    // Show actual buffer sizes
+    int actual_sndbuf, actual_rcvbuf;
+    socklen_t optlen = sizeof(int);
+    getsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &actual_sndbuf, &optlen);
+    getsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &actual_rcvbuf, &optlen);
+    printf("[initializeServerSocket] Actual send buffer: %d bytes, receive buffer: %d bytes\n", actual_sndbuf, actual_rcvbuf);
+
+    // Connect to master
     conn->addr_len = sizeof(client_addr);
     conn->connfd = accept(conn->sockfd, (struct sockaddr*)&client_addr, &conn->addr_len);
     if (conn->connfd < 0) handleError("Failed to accept connection");
+    
     printf("%s\n", DASHES DASHES DASHES DASHES);
     printf("Connection accepted.\n");
-    
 
     return conn;
 }
@@ -428,31 +470,48 @@ void sendData(double **matrix, double *vector_y, int n, int start_index, int end
     
     //  Send matrix info --------------------------------------------------------------------------
     int matrix_info[] = {start_index, end_index, n};
-    write(sockfd, matrix_info, sizeof(matrix_info));
+    if (write(sockfd, matrix_info, sizeof(matrix_info)) <= 0) handleError("Failed to send matrix metadata");
 
     //  Send matrix data --------------------------------------------------------------------------
-    unsigned int element_size = sizeof(double);
-    int num_elements = KB / element_size;
-    int groups_per_row = n / num_elements;
-    int remaining_elements = n % num_elements;
+    int num_rows = end_index - start_index;
+    size_t row_bytes = n * sizeof(double);
+    size_t chunk_size = 4096;  // 4KB
+    char *row_buffer = malloc(row_bytes);
 
-    for(int i = start_index; i < end_index; i++){
-        for(int j = 0; j < groups_per_row ; j++){
-            int start_index = j * num_elements;
-            write(sockfd, &matrix[i][start_index], num_elements * element_size);
+    if (!row_buffer) handleError("Failed to allocate row buffer");
+
+    // Send matrix rows (one row at a time in chunks)
+    for (int i = 0; i < num_rows; i++) {
+        memcpy(row_buffer, matrix[start_index + i], row_bytes);
+        size_t bytes_sent = 0;
+        while (bytes_sent < row_bytes) {
+            ssize_t sent = send(sockfd, row_buffer + bytes_sent, 
+                                (row_bytes - bytes_sent > chunk_size ? chunk_size : row_bytes - bytes_sent), 0);
+            if (sent == -1) {
+                perror("Failed to send matrix row");
+                free(row_buffer);
+                return;
+            }
+            bytes_sent += sent;
         }
-        write(sockfd, &matrix[i][groups_per_row  * num_elements], remaining_elements * element_size);
     }
 
-    //  Send vector data --------------------------------------------------------------------------
-    for (int j = 0; j < groups_per_row; j++) {
-        int start_index = j * groups_per_row;
-        write(sockfd, &vector_y[start_index], num_elements * element_size);
+    // Send vector_y (in full, as it's shared across all columns)
+    size_t vector_bytes = n * sizeof(double);
+    size_t bytes_sent = 0;
+    while (bytes_sent < vector_bytes) {
+        ssize_t sent = send(sockfd, ((char *)vector_y) + bytes_sent,
+                            (vector_bytes - bytes_sent > chunk_size ? chunk_size : vector_bytes - bytes_sent), 0);
+        if (sent == -1) {
+            perror("Failed to send vector_y");
+            free(row_buffer);
+            return;
+        }
+        bytes_sent += sent;
     }
-    write(sockfd, &vector_y[groups_per_row * num_elements], remaining_elements * element_size);
-    
-    return;
 
+    printf("Matrix (%d rows × %d cols) and vector (length %d) sent successfully.\n", num_rows, n, n);
+    free(row_buffer);
 }
 
 mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
@@ -460,7 +519,8 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
     
     //  Get matrix info ---------------------------------------------------------------------------
     int matrix_info[3];
-    read(connfd, matrix_info, sizeof(matrix_info));
+    if (read(connfd, matrix_info, sizeof(matrix_info)) <= 0) handleError("Failed to receive matrix metadata");
+    
     int rows_to_receive = matrix_info[1] - matrix_info[0];
     data->n = matrix_info[2];
     data->start_index = matrix_info[0]; 
@@ -470,35 +530,51 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
     data->X = malloc(sizeof(double*) * rows_to_receive);
     if (data->X == NULL) handleError("Failed to allocate memory for matrix rows");
 
+    for (int i = 0; i < rows_to_receive; i++) {
+        data->X[i] = malloc(data->n* sizeof(double));
+        if (data->X[i] == NULL) handleError("Failed to allocate matrix row");
+    }
+
     data->y = malloc(sizeof(double) * data->n);
     if (data->y == NULL) handleError("Failed to allocate memory for vector y");
 
     //  Get matrix data ---------------------------------------------------------------------------
-    unsigned int element_size = sizeof(double);
-    int num_elements = KB / element_size;
-    int groups_per_row = data->n / num_elements;
-    int remaining_elements = data->n % num_elements;
+    size_t row_bytes = data->n* sizeof(double);
+    size_t chunk_size = 4096;
+    char *row_buffer = malloc(row_bytes);
+    if (!row_buffer) handleError("Failed to allocate row buffer");
 
     for (int i = 0; i < rows_to_receive; i++) {
-        data->X[i] = malloc(sizeof(double) * data->n);
-        for (int j = 0; j < groups_per_row; j++) {
-            int start_index = j * num_elements;
-            read(connfd, &(data->X[i][start_index]), num_elements * element_size);
+        size_t bytes_received = 0;
+        while (bytes_received < row_bytes) {
+            ssize_t r = recv(connfd, row_buffer + bytes_received,
+                             (row_bytes - bytes_received > chunk_size ? chunk_size : row_bytes - bytes_received), 0);
+            if (r <= 0) {
+                perror("Failed to receive matrix row");
+                for (int j = 0; j <= i; j++) free(data->X[j]);
+                free(data->X);
+                free(row_buffer);
+                return NULL;
+            }
+            bytes_received += r;
         }
-        read(connfd, &(data->X[i][groups_per_row * num_elements]), remaining_elements * element_size);
+        memcpy(data->X[i], row_buffer, row_bytes);
     }
+    free(row_buffer);
 
     //  Get vector data ---------------------------------------------------------------------------
-    for (int j = 0; j < groups_per_row; j++) {
-        int start_index = j * num_elements;
-        read(connfd, &(data->y[start_index]), num_elements * element_size);
+    size_t vector_bytes = data->n* sizeof(double);
+    size_t bytes_received = 0;
+    while (bytes_received < vector_bytes) {
+        ssize_t r = recv(connfd, ((char*)data->y) + bytes_received,
+                         (vector_bytes - bytes_received > chunk_size ? chunk_size : vector_bytes - bytes_received), 0);
+        if (r <= 0) handleError("Failed to receive vector y");
+        bytes_received += r;
     }
-    read(connfd, &(data->y[groups_per_row * num_elements]), remaining_elements * element_size);
 
-    printf("Received %d (rows) by %d (cols) matrix, and vector of length %d\n", rows_to_receive, data->n, data->n);
-    
-    // For verification of submatrix received
-    if (data->n <= 15) {
+    printf("Successfully received matrix (%d x %d) and vector y (length %d).\n", rows_to_receive, data->n, data->n);
+
+    if (data->n<= 15) {
         printMatrix("Received Matrix", data->X, rows_to_receive, data->n);
         printVector("Received Vector y", data->y, data->n);
         printf("%s\n", DASHES DASHES DASHES DASHES);
@@ -618,14 +694,11 @@ void printVector(char *vector_name, double *vector, int size) {
 
 void record_experiment(char *filename, int p, int n, int t, double runtime) {
     char tsv_filename[256];
-    char pretty_filename[256];
 
     // Build filenames
     snprintf(tsv_filename, sizeof(tsv_filename), "util/%s.tsv", filename);
-    snprintf(pretty_filename, sizeof(pretty_filename), "util/%s_pretty.txt", filename);
 
     FILE *tsv_file;
-    FILE *pretty_file;
 
     // TSV Output
     if ((tsv_file = fopen(tsv_filename, "r")) == NULL) {
@@ -635,28 +708,13 @@ void record_experiment(char *filename, int p, int n, int t, double runtime) {
             fprintf(stderr, "Error opening TSV file\n");
             exit(1);
         }
-        fprintf(tsv_file, "Date\tPort Num\tn\tt\tRuntime\n");    
+        fprintf(tsv_file, "Date\tPort\tn\tt\tRuntime\n");    
     } else {
         fclose(tsv_file);
         tsv_file = fopen(tsv_filename, "a");
     }
 
-    // Pretty Output
-    if ((pretty_file = fopen(pretty_filename, "r")) == NULL) {
-        // IF file doesn't exist, create new file then write header
-        pretty_file = fopen(pretty_filename, "w");
-        if (!pretty_file) {
-            fprintf(stderr, "Error opening Pretty file\n");
-            exit(1);
-        }
-        fprintf(pretty_file, "| %-19s | %-10s | %-10s | %-10s | %-10s |\n", "Date/Time", "Port Num", "n", "t", "Runtime");
-        fprintf(pretty_file, "+---------------------+------------+------------+------------+------------+\n");
-    } else {
-        fclose(pretty_file);
-        pretty_file = fopen(pretty_filename, "a");
-    }
-
-    if (!tsv_file || !pretty_file) {
+    if (!tsv_file) {
         fprintf(stderr, "Error opening output files\n");
         exit(1);
     }
@@ -670,10 +728,5 @@ void record_experiment(char *filename, int p, int n, int t, double runtime) {
     // Write/Append to TSV
     fprintf(tsv_file, "%s\t%d\t%d\t%d\t%.6f\n", date_time, p, n, t, runtime);
 
-    // Write/Append to Pretty
-    fprintf(pretty_file, "| %-19s | %-10d | %-10d | %-10d | %-10.6f |\n", date_time, p, n, t, runtime);
-    if (p == 28030) fprintf(pretty_file, "+---------------------+------------+------------+------------+------------+\n");
-
     fclose(tsv_file);
-    fclose(pretty_file);
 }
