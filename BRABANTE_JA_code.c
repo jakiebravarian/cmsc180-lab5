@@ -68,7 +68,7 @@ SocketConnection* connectToServer(const char* ip, int port);
 SocketConnection* initializeServerSocket(const char* ip, int port);
 
 void broadcast_vector_y(double* y, int n, address** slave_addresses, int t);
-void sendData(double **matrix, double *vector_y, int n, int start_index, int end_index, int sockfd);
+void sendData(double **matrix, int n, int start_index, int end_index, int sockfd);
 mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data);
 
 void mse(mse_args_t* args);
