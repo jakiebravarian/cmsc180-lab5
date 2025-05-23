@@ -233,17 +233,16 @@ void master(int n, int p, int t, address **slave_addresses) {
         }
 
         args[i] = (master_args_t){
-            .matrix = transposed,
-            .results = malloc((end_list[i] - start_list[i]) * sizeof(double)),
+            .matrix = transposed_matrix,
             .n = n,
-            .start_index = start_list[i],
-            .end_index = end_list[i],
+            .start_index = starting_index_list[i],
+            .end_index = ending_index_list[i],
             .t_number = i,
             .slave_address = slave_addresses[i]
         };
-
+        
+        args[i].results = malloc((ending_index_list[i] - starting_index_list[i]) * sizeof(double));
         thread_results[i] = args[i].results;
-        args[i].slave_address = slave_addresses[i];
         pthread_create(&threads[i], NULL, master_t, (void*)&args[i]);
     }
 
