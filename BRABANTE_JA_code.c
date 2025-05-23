@@ -168,7 +168,7 @@ void master(int n, int p, int t, address **slave_addresses) {
 
     //  Indicate that the master is now running ---------------------------------------------------
     printf("MASTER is now LISTENING at PORT %d", p);
-    printf("\n%s", DASHES DASHES DASHES DASHES);
+    printf("\n%s\n", DASHES DASHES DASHES DASHES);
 
 
     //  Create matrix and vector y ----------------------------------------------------------------
@@ -243,7 +243,7 @@ void master(int n, int p, int t, address **slave_addresses) {
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_elapsed = get_elapsed_time(start, end);
     printf("\n(Master) Time Elapsed: %f seconds\n", time_elapsed);
-    printf("%s", DASHES DASHES DASHES DASHES);
+    printf("%s\n", DASHES DASHES DASHES DASHES);
 
     if(n <= 15){
         printVector("Collated vector e", final_results, n);
@@ -317,7 +317,7 @@ void slave(int n, int p, int t, address *master_address, address *slave_address,
     if(conn->sockfd == -1) handleError("Error: Server socket initialization failed.\n");
     
     printf("Slave listening at port %d\n", slave_address->port);
-    printf("%s", DASHES DASHES DASHES DASHES);
+    printf("%s\n", DASHES DASHES DASHES DASHES);
 
     
     //  Receive data from master ------------------------------------------------------------------
@@ -337,7 +337,7 @@ void slave(int n, int p, int t, address *master_address, address *slave_address,
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_elapsed = get_elapsed_time(start, end);
     printf("(Slave - MSE Computation) Time Elapsed: %f seconds\n", time_elapsed);
-    printf("%s", DASHES DASHES DASHES DASHES);
+    printf("%s\n", DASHES DASHES DASHES DASHES);
 
     char filename[64];
     snprintf(filename, sizeof(filename), "Exer5_Slave_%s", label);
@@ -646,7 +646,7 @@ void createMatrixVector(double** matrix, double* vector_y, int n){
         double y_values[15] = {79.03, 79.03, 79.03, 82.11, 82.11, 82.11, 82.11, 82.11, 85.19, 85.19, 88.27, 91.35, 91.35, 91.35, 94.43};
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                matrix[i][j] = values[j]; 
+                matrix[j][i] = values[j]; 
             }
             vector_y[i] = y_values[i];
         }
