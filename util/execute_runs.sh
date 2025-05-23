@@ -3,7 +3,7 @@
 # === CONFIG ===
 N=15                 # Matrix size
 T=8                  # Total number of threads/slaves
-LABEL="PCWS1"                  # Core-affined? 0 = no, 1 = yes
+LABEL="LaptopWSL1"        # Core-affined? 0 = no, 1 = yes
 BASE_PORT=28030      # Starting port
 EXEC=./a.out         # Compiled binary
 SESSION_NAME="lab_slaves"
