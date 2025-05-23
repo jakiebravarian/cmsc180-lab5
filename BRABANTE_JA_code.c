@@ -33,6 +33,7 @@ typedef struct {
 
 typedef struct {
     double **matrix;
+    double *y;
     double *results;
     int n;
     int start_index; 
@@ -67,8 +68,7 @@ void setThreadCoreAffinity(int thread_number);
 SocketConnection* connectToServer(const char* ip, int port);
 SocketConnection* initializeServerSocket(const char* ip, int port);
 
-void broadcast_vector_y(double* y, int n, address** slave_addresses, int t);
-void sendData(double **matrix, int n, int start_index, int end_index, int sockfd);
+void sendData(double **matrix, double *vector_y, int n, int start_index, int end_index, int sockfd);
 mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data);
 
 void mse(mse_args_t* args);
@@ -218,32 +218,12 @@ void master(int n, int p, int t, address **slave_addresses) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    SocketConnection **connections = malloc(t * sizeof(SocketConnection*));
-
     for (int i = 0; i < t; i++) {
-        connections[i] = connectToServer(slave_addresses[i]->ip, slave_addresses[i]->port);
+        args[i] = (master_args_t){.matrix = transposed_matrix, .y = vector_y, .n = n, .start_index = starting_index_list[i], .end_index = ending_index_list[i], .t_number = i, .slave_address = slave_addresses[i]};
+        args[i].results = malloc((ending_index_list[i] - starting_index_list[i]) * sizeof(double));  // Allocate individual results array
+        thread_results[i] = args[i].results; // Store pointer for aggregation
 
-        // Send vector_y broadcast
-        size_t vec_bytes = n * sizeof(double), sent = 0, chunk = 4096;
-        while (sent < vec_bytes) {
-            ssize_t s = send(connections[i]->sockfd, ((char*)vector_y) + sent,
-                             (vec_bytes - sent > chunk ? chunk : vec_bytes - sent), 0);
-            if (s == -1) handleError("Failed broadcast send");
-            sent += s;
-        }
-
-        args[i] = (master_args_t){
-            .matrix = transposed_matrix,
-            .n = n,
-            .start_index = starting_index_list[i],
-            .end_index = ending_index_list[i],
-            .t_number = i,
-            .slave_address = slave_addresses[i]
-        };
-        
-        args[i].results = malloc((ending_index_list[i] - starting_index_list[i]) * sizeof(double));
-        thread_results[i] = args[i].results;
-        pthread_create(&threads[i], NULL, master_t, (void*)&args[i]);
+        pthread_create(&threads[i], NULL, master_t, (void *)&args[i]);
     }
 
 
@@ -292,6 +272,7 @@ void* master_t(void *args) {
     master_args_t* actual_args = (master_args_t*)args;
 
     double **matrix = actual_args->matrix;
+    double *y = actual_args->y;
     double *results = actual_args->results;
     int n = actual_args->n;
     int start_index = actual_args->start_index;
@@ -310,7 +291,7 @@ void* master_t(void *args) {
     //  Send data ---------------------------------------------------------------------------------
     printf("[%d] Master sending columns %d to %d (size: %d x %d) to %s:%d\n", t_number, start_index, end_index - 1, n, end_index - start_index, slave_address->ip, slave_address->port);
     printf("%s\n", DASHES DASHES DASHES DASHES);
-    sendData(matrix, n, start_index, end_index, conn->sockfd);
+    sendData(matrix, y, n, start_index, end_index, conn->sockfd);
 
     //  Receive result ----------------------------------------------------------------------------
     receiveResult(conn->sockfd, results, n, start_index, end_index);
@@ -338,21 +319,10 @@ void slave(int n, int p, int t, address *master_address, address *slave_address,
     printf("Slave listening at port %d\n", slave_address->port);
     printf("%s", DASHES DASHES DASHES DASHES);
 
-    // Receive vector_y first (broadcast)
-    double* y = malloc(n * sizeof(double));
-    size_t received = 0, chunk = 4096;
-    while (received < n * sizeof(double)) {
-        ssize_t r = recv(conn->connfd, ((char*)y) + received,
-                         (n * sizeof(double) - received > chunk ? chunk : n * sizeof(double) - received), 0);
-        if (r <= 0) handleError("Failed receiving vector_y broadcast");
-        received += r;
-    }
-    printf("[Slave] vector_y received (%lu bytes)\n", received);
     
     //  Receive data from master ------------------------------------------------------------------
     mse_args_t *data = malloc(sizeof(mse_args_t));
     receiveData(conn, data);
-    data->y = y;
 
     // Start time before computation
     struct timespec start, end;
@@ -491,35 +461,7 @@ SocketConnection* initializeServerSocket(const char* ip, int port) {
     return conn;
 }
 
-void broadcast_vector_y(double* y, int n, address** slave_addresses, int t) {
-    size_t vector_bytes = n * sizeof(double);
-    size_t chunk_size = 4096;
-
-    for (int i = 0; i < t; i++) {
-        SocketConnection* conn = connectToServer(slave_addresses[i]->ip, slave_addresses[i]->port);
-        printf("[Broadcast] Connected to %s:%d for vector_y broadcast\n", slave_addresses[i]->ip, slave_addresses[i]->port);
-
-        size_t bytes_sent = 0;
-        while (bytes_sent < vector_bytes) {
-            ssize_t sent = send(conn->sockfd, ((char *)y) + bytes_sent,
-                                (vector_bytes - bytes_sent > chunk_size ? chunk_size : vector_bytes - bytes_sent), 0);
-            if (sent == -1) {
-                perror("Failed to broadcast vector_y");
-                close(conn->sockfd);
-                free(conn);
-                break;
-            }
-            bytes_sent += sent;
-        }
-
-        printf("[Broadcast] vector_y sent to %s:%d (%zu bytes)\n", slave_addresses[i]->ip, slave_addresses[i]->port, bytes_sent);
-        close(conn->sockfd);
-        free(conn);
-    }
-}
-
-
-void sendData(double **matrix, int n, int start_index, int end_index, int sockfd) {
+void sendData(double **matrix, double *vector_y, int n, int start_index, int end_index, int sockfd) {
     
     //  Send matrix info --------------------------------------------------------------------------
     int matrix_info[] = {start_index, end_index, n};
@@ -549,7 +491,21 @@ void sendData(double **matrix, int n, int start_index, int end_index, int sockfd
         }
     }
 
-     printf("Matrix data sent: %d rows (%.2f KB)\n", num_rows, num_rows * row_bytes / 1024.0);
+    // Send vector_y (in full, as it's shared across all columns)
+    size_t vector_bytes = n * sizeof(double);
+    size_t bytes_sent = 0;
+    while (bytes_sent < vector_bytes) {
+        ssize_t sent = send(sockfd, ((char *)vector_y) + bytes_sent,
+                            (vector_bytes - bytes_sent > chunk_size ? chunk_size : vector_bytes - bytes_sent), 0);
+        if (sent == -1) {
+            perror("Failed to send vector_y");
+            free(row_buffer);
+            return;
+        }
+        bytes_sent += sent;
+    }
+
+    printf("Matrix (%d rows × %d cols) and vector (length %d) sent successfully.\n", num_rows, n, n);
     free(row_buffer);
 }
 
@@ -565,7 +521,7 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
     data->start_index = matrix_info[0]; 
     data->end_index = matrix_info[1];
 
-    // Allocate memory for matrix
+    // Allocate memory for matrix and vector
     data->X = malloc(sizeof(double*) * rows_to_receive);
     if (data->X == NULL) handleError("Failed to allocate memory for matrix rows");
 
@@ -573,6 +529,9 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
         data->X[i] = malloc(data->n* sizeof(double));
         if (data->X[i] == NULL) handleError("Failed to allocate matrix row");
     }
+
+    data->y = malloc(sizeof(double) * data->n);
+    if (data->y == NULL) handleError("Failed to allocate memory for vector y");
 
     //  Get matrix data ---------------------------------------------------------------------------
     size_t row_bytes = data->n* sizeof(double);
@@ -598,7 +557,17 @@ mse_args_t* receiveData(SocketConnection *conn, mse_args_t *data){
     }
     free(row_buffer);
 
-    printf("Successfully received matrix (%d x %d) and vector y.\n", rows_to_receive, data->n);
+    //  Get vector data ---------------------------------------------------------------------------
+    size_t vector_bytes = data->n* sizeof(double);
+    size_t bytes_received = 0;
+    while (bytes_received < vector_bytes) {
+        ssize_t r = recv(connfd, ((char*)data->y) + bytes_received,
+                         (vector_bytes - bytes_received > chunk_size ? chunk_size : vector_bytes - bytes_received), 0);
+        if (r <= 0) handleError("Failed to receive vector y");
+        bytes_received += r;
+    }
+
+    printf("Successfully received matrix (%d x %d) and vector y (length %d).\n", rows_to_receive, data->n, data->n);
 
     if (data->n<= 15) {
         printMatrix("Received Matrix", data->X, rows_to_receive, data->n);
