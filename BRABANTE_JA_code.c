@@ -109,8 +109,8 @@ int main(int argc, char *argv[]) {
 
     //  Read IP Addresses and Port Numbers in Config File
     char filename[255];
-    sprintf(filename, "localconfig/config_%d.cfg", t);
-    // sprintf(filename, "droneconfig/config_%d.cfg", t);
+    // sprintf(filename, "localconfig/config_%d.cfg", t);
+    sprintf(filename, "droneconfig/config_%d.cfg", t);
     printf("READING FROM CONFIG FILE: %s\n", filename);
 
     FILE *file = fopen(filename, "r");
@@ -401,11 +401,6 @@ SocketConnection* connectToServer(const char* ip, int port) {
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) handleError("Invalid address / Address not supported");
 
-    // Increase buffer size to handle large data transfers
-    int buf_size = 2 * KB * KB;
-    setsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
-    setsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
-
     // Print actual buffer size settings
     int actual_sndbuf, actual_rcvbuf;
     socklen_t optlen = sizeof(int);
@@ -442,11 +437,6 @@ SocketConnection* initializeServerSocket(const char* ip, int port) {
     // Listen on socket
     if (listen(conn->sockfd, 5) != 0) handleError("Failed to listen on socket");
     printf("Server socket is now listening for connections...\n");
-    
-    // Increase buffer sizes
-    int buf_size = 2 * KB * KB;
-    setsockopt(conn->sockfd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
-    setsockopt(conn->sockfd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
 
     // Show actual buffer sizes
     int actual_sndbuf, actual_rcvbuf;
